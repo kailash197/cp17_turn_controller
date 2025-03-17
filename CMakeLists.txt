@@ -11,6 +11,10 @@ find_package(rclcpp REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
+
+# Include Eigen headers
+include_directories(${EIGEN3_INCLUDE_DIRS})
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -23,5 +27,13 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+add_executable(turn_controller src/turn_controller.cpp)
+ament_target_dependencies(turn_controller rclcpp std_msgs geometry_msgs nav_msgs tf2)
+
+# Install the executable & launch
+install(TARGETS
+  turn_controller
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
