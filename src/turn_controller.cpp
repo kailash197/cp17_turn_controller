@@ -142,7 +142,7 @@ void TurnController::pid_controller() {
   std::vector<double> capped_velocities;
   double dx, dy, dphi;
   double sp_x, sp_y, sp_phi;
-  double distance;
+  double error;
   geometry_msgs::msg::Twist twist;
   RCLCPP_INFO(this->get_logger(), "Trajectory started.");
 
@@ -152,16 +152,14 @@ void TurnController::pid_controller() {
     dx = waypoint[0];
     dy = waypoint[1];
     dphi = waypoint[2];
+    RCLCPP_INFO(this->get_logger(), "WP: [%.2f, %.2f, %.2f]", dx, dy, dphi);
 
     sp_x = current_position_.x + dx;
     sp_y = current_position_.y + dy;
     sp_phi = phi + dphi;
 
-    // Log the waypoint
-    RCLCPP_INFO(this->get_logger(), "phi: %.3f, dp: %.3f", phi, dphi);
-
     rclcpp::Rate rate(int(1 / time_step)); // Control loop frequency
-    distance = 0.0;
+    error = 0.0;
 
     do {
       if (!rclcpp::ok()) { // Check if ROS is still running
@@ -176,10 +174,10 @@ void TurnController::pid_controller() {
       u_y = pid_y_.compute(sp_y, current_position_.y);
       u_z = pid_z_.compute(sp_phi, phi);
 
-      // Calculate distance to the target
-      distance = pid_z_.getError();
+      // Calculate error to the target
+      error = pid_z_.getError();
       RCLCPP_DEBUG(this->get_logger(), "phi: %.3f, angle to target: %.3f rads",
-                   phi, distance);
+                   phi, error);
       RCLCPP_DEBUG(this->get_logger(), "Position: %.3f,%.3f,%.3f",
                    current_position_.x, current_position_.y, phi);
 
@@ -191,9 +189,10 @@ void TurnController::pid_controller() {
       cmd_vel_publisher_->publish(twist);
       RCLCPP_DEBUG(this->get_logger(), "Angular vel: %.3f", twist.angular.z);
 
-      rate.sleep();                   // Maintain loop frequency
-    } while (fabs(distance) > 0.007); // Run until distance is within tolerance
+      rate.sleep();                // Maintain loop frequency
+    } while (fabs(error) > 0.007); // Run until error is within tolerance
     // Now stop the bot
+    RCLCPP_INFO(this->get_logger(), "Stopping for 2 seconds");
     twist.linear.x = 0.0;
     twist.linear.y = 0.0;
     twist.angular.z = 0.0;
