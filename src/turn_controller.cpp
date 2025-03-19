@@ -122,12 +122,7 @@ TurnController::TurnController(int scene_number)
       options);
 
   SelectWaypoints();
-  /* https://husarion.com/manuals/rosbot-xl/
-  Maximum translational velocity = 0.8 m/s
-  Maximum rotational velocity = 180 deg/s (3.14 rad/s)
-  */
-  max_velocity_ = 0.8;
-  max_ang_velocity_ = 3.14;
+
   pid_x_ = PID(1.0, 0.01, 0.20, time_step);
   pid_y_ = PID(1.0, 0.01, 0.20, time_step);
   pid_z_ = PID(2.0, 0.01, 0.30, time_step);
@@ -229,6 +224,12 @@ void TurnController::SelectWaypoints() {
   case 1: // Simulation
     // Assign waypoints for Simulation
     RCLCPP_INFO(this->get_logger(), "Welcome to Simulation!");
+    /* https://husarion.com/manuals/rosbot-xl/
+    Maximum translational velocity = 0.8 m/s
+    Maximum rotational velocity = 180 deg/s (3.14 rad/s)
+    */
+    max_velocity_ = 0.8;
+    max_ang_velocity_ = 3.14;
     // Waypoints: {dx,dy,dphi}
     waypoints_ = {
         {0.0, 0.0, -1.5708}, // w1
@@ -241,16 +242,17 @@ void TurnController::SelectWaypoints() {
   case 2: // CyberWorld
     // Assign waypoints for CyberWorld
     RCLCPP_INFO(this->get_logger(), "Welcome to CyberWorld!");
+    /* https://husarion.com/manuals/rosbot-xl/
+    Maximum translational velocity = 0.8 m/s
+    Maximum rotational velocity = 180 deg/s (3.14 rad/s)
+    */
+    max_velocity_ = 0.35;
+    max_ang_velocity_ = 0.5;
     waypoints_ = {
-        {0.0, 1.0, -1.0},      // w1
-        {0.0, 1.0, 1.0},       // w2
-        {0.0, 1.0, 1.0},       // w3
-        {-1.5708, 1.0, -1.0},  // w4
-        {-1.5708, -1.0, -1.0}, // w5
-        {0.0, -1.0, 1.0},      // w6
-        {0.0, -1.0, 1.0},      // w7
-        {0.0, -1.0, -1.0},     // w8
-        {0.0, 0.0, 0.0}        // Stop
+        {0.0, 0.0, -1.5708}, // w1
+        {0.0, 0.0, +0.7854}, // w2
+        {0.0, 0.0, +1.8221}, // w3
+        {0.0, 0.0, -1.0472}  // w4
     };
     break;
 
