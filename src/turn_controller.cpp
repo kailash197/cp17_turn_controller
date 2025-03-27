@@ -69,6 +69,7 @@ private:
 
   PID pid_z_;
   double kp_sim, ki_sim, kd_sim;
+  double kp_real, ki_real, kd_real;
   double time_step;
 
 public:
@@ -120,6 +121,7 @@ TurnController::TurnController(int scene_number)
 
   // PID Parameters
   kp_sim = 2.0, ki_sim = 0.01, kd_sim = 0.30;
+  kp_real = 2.0, ki_real = 0.01, kd_real = 0.30;
   time_step = 0.01; // in milliseconds
   SelectWaypoints();
 
@@ -212,17 +214,18 @@ void TurnController::SelectWaypoints() {
   case 2: // CyberWorld
     // Assign waypoints for CyberWorld
     RCLCPP_INFO(this->get_logger(), "Welcome to CyberWorld!");
+    /* https://husarion.com/manuals/rosbot-xl/
+    Maximum translational velocity = 0.8 m/s
+    Maximum rotational velocity = 180 deg/s (3.14 rad/s)
+    */
+    max_velocity_ = 0.5;
+    max_ang_velocity_ = 0.5;
     waypoints_ = {
-        {0.0, 1.0, -1.0},      // w1
-        {0.0, 1.0, 1.0},       // w2
-        {0.0, 1.0, 1.0},       // w3
-        {-1.5708, 1.0, -1.0},  // w4
-        {-1.5708, -1.0, -1.0}, // w5
-        {0.0, -1.0, 1.0},      // w6
-        {0.0, -1.0, 1.0},      // w7
-        {0.0, -1.0, -1.0},     // w8
-        {0.0, 0.0, 0.0}        // Stop
+        {0.0, 0.0, -0.5236}, // w1
+        {0.0, 0.0, -0.7854}, // w2
+        {0.0, 0.0, +1.3090}, // w3
     };
+    pid_z_ = PID(kp_real, ki_real, kd_real, time_step);
     break;
 
   default:
