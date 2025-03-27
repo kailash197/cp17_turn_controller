@@ -7,6 +7,8 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <vector>
 
+using namespace std::chrono_literals;
+
 class PID {
 public:
   PID() : kp_(0.0), ki_(0.0), kd_(0.0), dt_(0.0) {}
@@ -14,28 +16,34 @@ public:
   PID(double kp, double ki, double kd, double dt)
       : kp_(kp), ki_(ki), kd_(kd), dt_(dt), integral_(0.0), prev_error_(0.0) {}
 
-  double compute(double setpoint, double measurement) {
-    double error = setpoint - measurement;
+  double compute(double error) {
     integral_ += error * dt_;
+    integral_ = std::clamp(integral_, -0.5, 0.5); // Anti-windup
     double derivative = (error - prev_error_) / dt_;
     double output = kp_ * error + ki_ * integral_ + kd_ * derivative;
-
     prev_error_ = error;
     return output;
   }
 
-  double getError() { return prev_error_; }
+  void reset_() {
+    integral_ = 0.0;
+    prev_error_ = 0.0;
+  }
 
 private:
-  double kp_;
-  double ki_;
-  double kd_;
-  double dt_;
+  double kp_, ki_, kd_, dt_;
   double integral_;
   double prev_error_;
 };
 
-using namespace std::chrono_literals;
+// Function to normalize angle to the range -pi to pi
+double normalize_angle(double angle) {
+  while (angle > M_PI)
+    angle -= 2.0 * M_PI;
+  while (angle < -M_PI)
+    angle += 2.0 * M_PI;
+  return angle;
+}
 
 class TurnController : public rclcpp::Node {
 private:
@@ -59,24 +67,13 @@ private:
   geometry_msgs::msg::Point current_position_;
   double phi; // current_yaw_
 
-  // Robot parameters
-  double l;
-  double r;
-  double w;
-
-  // Transformation matrix H_4x3 & Pseudo-inverse of H
-  Eigen::MatrixXd H, H_pseudo_inverse;
-
-  // Wheel speeds
-  Eigen::Vector4d u;
-
-  PID pid_x_, pid_y_, pid_z_;
-  double time_step = 0.01; // in milliseconds
+  PID pid_z_;
+  double kp_sim, ki_sim, kd_sim;
+  double time_step;
 
 public:
   TurnController(int scene_number);
   ~TurnController();
-  std::vector<double> cap_velocities(double u_x, double u_y, double u_z);
 };
 
 TurnController::~TurnController() {
@@ -121,16 +118,11 @@ TurnController::TurnController(int scene_number)
       std::bind(&TurnController::odom_callback, this, std::placeholders::_1),
       options);
 
+  // PID Parameters
+  kp_sim = 2.0, ki_sim = 0.01, kd_sim = 0.30;
+  time_step = 0.01; // in milliseconds
   SelectWaypoints();
-  /* https://husarion.com/manuals/rosbot-xl/
-  Maximum translational velocity = 0.8 m/s
-  Maximum rotational velocity = 180 deg/s (3.14 rad/s)
-  */
-  max_velocity_ = 0.8;
-  max_ang_velocity_ = 3.14;
-  pid_x_ = PID(1.0, 0.01, 0.20, time_step);
-  pid_y_ = PID(1.0, 0.01, 0.20, time_step);
-  pid_z_ = PID(2.0, 0.01, 0.30, time_step);
+
   RCLCPP_INFO(this->get_logger(), "Turn Controller Initialized.");
 
   timer_ = this->create_wall_timer(
@@ -138,32 +130,28 @@ TurnController::TurnController(int scene_number)
 }
 
 void TurnController::pid_controller() {
-  double u_x, u_y, u_z;
-  std::vector<double> capped_velocities;
   double dx, dy, dphi;
-  double sp_x, sp_y, sp_phi;
-  double distance;
-  geometry_msgs::msg::Twist twist;
+  geometry_msgs::msg::Twist cmd_vel;
+  cmd_vel.linear.x = 0.0;
+  cmd_vel.linear.y = 0.0;
   RCLCPP_INFO(this->get_logger(), "Trajectory started.");
 
   // Loop through each waypoint
+  int index = 0;
   for (const auto &waypoint : waypoints_) {
+    pid_z_.reset_();
+    rclcpp::Rate rate(int(1 / time_step)); // Control loop frequency
 
     dx = waypoint[0];
     dy = waypoint[1];
     dphi = waypoint[2];
+    RCLCPP_INFO(this->get_logger(), "WP%u: [%.2f, %.2f, %.2f]", ++index, dx, dy,
+                dphi);
 
-    sp_x = current_position_.x + dx;
-    sp_y = current_position_.y + dy;
-    sp_phi = phi + dphi;
+    double target_z = normalize_angle(phi + dphi);
+    double error_z = std::numeric_limits<double>::max();
 
-    // Log the waypoint
-    RCLCPP_INFO(this->get_logger(), "phi: %.3f, dp: %.3f", phi, dphi);
-
-    rclcpp::Rate rate(int(1 / time_step)); // Control loop frequency
-    distance = 0.0;
-
-    do {
+    while (fabs(error_z) > 0.007) {
       if (!rclcpp::ok()) { // Check if ROS is still running
         RCLCPP_WARN(this->get_logger(), "Trajectory Canceled.");
         timer_->cancel();         // Stop the timer
@@ -171,33 +159,26 @@ void TurnController::pid_controller() {
         rclcpp::shutdown();
         return;
       }
-      // PID calculation
-      u_x = pid_x_.compute(sp_x, current_position_.x);
-      u_y = pid_y_.compute(sp_y, current_position_.y);
-      u_z = pid_z_.compute(sp_phi, phi);
 
-      // Calculate distance to the target
-      distance = pid_z_.getError();
-      RCLCPP_DEBUG(this->get_logger(), "phi: %.3f, angle to target: %.3f rads",
-                   phi, distance);
-      RCLCPP_DEBUG(this->get_logger(), "Position: %.3f,%.3f,%.3f",
-                   current_position_.x, current_position_.y, phi);
+      // Calculate error
+      error_z = target_z - phi;
+      error_z =
+          atan2(sin(error_z), cos(error_z)); // Normalize error to [-pi, pi]
+      RCLCPP_DEBUG(this->get_logger(), "Angle to target: %.2f", error_z);
 
-      // Prepare and publish the twist message
-      capped_velocities = cap_velocities(u_x, u_y, u_z);
-      twist.linear.x = capped_velocities[0];
-      twist.linear.y = capped_velocities[1];
-      twist.angular.z = capped_velocities[2];
-      cmd_vel_publisher_->publish(twist);
-      RCLCPP_DEBUG(this->get_logger(), "Angular vel: %.3f", twist.angular.z);
+      // PID control
+      double angular_vel = pid_z_.compute(error_z);
+      angular_vel =
+          std::clamp(angular_vel, -max_ang_velocity_, max_ang_velocity_);
+      cmd_vel.angular.z = angular_vel;
+      cmd_vel_publisher_->publish(cmd_vel);
+      RCLCPP_DEBUG(this->get_logger(), "Angular vel: %.3f", cmd_vel.angular.z);
 
-      rate.sleep();                   // Maintain loop frequency
-    } while (fabs(distance) > 0.007); // Run until distance is within tolerance
+      rate.sleep(); // Maintain loop frequency
+    }
     // Now stop the bot
-    twist.linear.x = 0.0;
-    twist.linear.y = 0.0;
-    twist.angular.z = 0.0;
-    cmd_vel_publisher_->publish(twist);
+    cmd_vel.angular.z = 0.0;
+    cmd_vel_publisher_->publish(cmd_vel);
     std::this_thread::sleep_for(std::chrono::seconds(2));
   }
 
@@ -207,36 +188,25 @@ void TurnController::pid_controller() {
   rclcpp::shutdown();
 }
 
-std::vector<double> TurnController::velocity2twist(double vx, double vy,
-                                                   double avz) {
-  // Create input vector
-  Eigen::Vector3d velocity(vx, vy, avz);
-
-  // Define the transformation matrix R row-wise
-  Eigen::MatrixXd R(3, 3);                      // 3x3 matrix
-  R.row(0) << 1, 0, 0;                          // Row 0
-  R.row(1) << 0, std::cos(phi), std::sin(phi);  // Row 1
-  R.row(2) << 0, -std::sin(phi), std::cos(phi); // Row 2
-
-  // Perform matrix-vector multiplication
-  Eigen::Vector3d twist = R * velocity;
-
-  // Convert Eigen::Vector3d to std::vector<double>
-  return std::vector<double>{twist(0), twist(1), twist(2)};
-}
-
 void TurnController::SelectWaypoints() {
   switch (scene_number_) {
   case 1: // Simulation
     // Assign waypoints for Simulation
     RCLCPP_INFO(this->get_logger(), "Welcome to Simulation!");
+    /* https://husarion.com/manuals/rosbot-xl/
+    Maximum translational velocity = 0.8 m/s
+    Maximum rotational velocity = 180 deg/s (3.14 rad/s)
+    */
+    max_velocity_ = 1.0;
+    max_ang_velocity_ = 3.0;
     // Waypoints: {dx,dy,dphi}
     waypoints_ = {
-        {0.0, 0.0, -1.5708}, // w1
-        {0.0, 0.0, +0.7854}, // w2
-        {0.0, 0.0, +1.8221}, // w3
-        {0.0, 0.0, -1.0472}  // w4
+        {0.0, 0.0, -1.1254}, // w1
+        {0.0, 0.0, +1.0021}, // w2
+        {0.0, 0.0, +1.0572}, // w3
+        {0.0, 0.0, -0.9339}, // w4
     };
+    pid_z_ = PID(kp_sim, ki_sim, kd_sim, time_step);
     break;
 
   case 2: // CyberWorld
@@ -258,25 +228,6 @@ void TurnController::SelectWaypoints() {
   default:
     RCLCPP_ERROR(this->get_logger(), "Invalid Scene Number: %d", scene_number_);
   }
-}
-
-std::vector<double> TurnController::cap_velocities(double u_x, double u_y,
-                                                   double u_z) {
-  // Cap linear velocities
-  double linear_velocity_magnitude = std::sqrt(u_x * u_x + u_y * u_y);
-  if (linear_velocity_magnitude > max_velocity_) {
-    double scale_factor = max_velocity_ / linear_velocity_magnitude;
-    u_x *= scale_factor;
-    u_y *= scale_factor;
-  }
-
-  // Cap angular velocity
-  if (std::abs(u_z) > max_ang_velocity_) {
-    u_z = (u_z > 0 ? max_ang_velocity_ : -max_ang_velocity_);
-  }
-
-  // Return capped velocities
-  return {u_x, u_y, u_z};
 }
 
 int main(int argc, char **argv) {
