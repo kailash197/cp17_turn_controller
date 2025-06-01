@@ -121,7 +121,7 @@ TurnController::TurnController(int scene_number)
 
   // PID Parameters
   kp_sim = 2.0, ki_sim = 0.01, kd_sim = 0.30;
-  kp_real = 2.0, ki_real = 0.01, kd_real = 0.30;
+  kp_real = 1.5, ki_real = 0.01, kd_real = 0.50;
   time_step = 0.01; // in milliseconds
   SelectWaypoints();
 
@@ -218,12 +218,12 @@ void TurnController::SelectWaypoints() {
     Maximum translational velocity = 0.8 m/s
     Maximum rotational velocity = 180 deg/s (3.14 rad/s)
     */
-    max_velocity_ = 0.5;
-    max_ang_velocity_ = 0.5;
+    max_velocity_ = 0.65;
+    max_ang_velocity_ = 3.0;
     waypoints_ = {
-        {0.0, 0.0, -0.5236}, // w1
-        {0.0, 0.0, -0.7854}, // w2
-        {0.0, 0.0, +1.3090}, // w3
+        {0.0, 0.0, -0.3490}, // w1
+        {0.0, 0.0, -0.6982}, // w2
+        {0.0, 0.0, +1.0472}, // w3
     };
     pid_z_ = PID(kp_real, ki_real, kd_real, time_step);
     break;
